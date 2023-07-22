@@ -101,8 +101,8 @@ data=data.drop_duplicates( keep="first")
 
 
 # Preprocess the data
-texts = data['Text'].astype(str)
-labels = data['oh_label'].astype(int)
+Text = data['Text'].astype(str)
+oh_label = data['oh_label'].astype(int)
 
 
 # Define the focal loss function

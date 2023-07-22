@@ -5,8 +5,8 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, precision_score, recall_score, f1_score, roc_curve, auc
-import matplotlib.pyplot as plt
 import time
+import nltk
 
 
 # # import libraries 
@@ -34,7 +34,7 @@ tf.data.experimental.enable_debug_mode()
 # In[203]:
 
 
-data = pd.read_csv('twitter_racism_parsed_dataset.csv')
+data = pd.read_csv('aggression_parsed_dataset.csv')
 
 Text = data['Text'].astype(str)
 oh_label = data['oh_label'].astype(int)
@@ -106,6 +106,15 @@ oh_label = data['oh_label'].astype(int)
 
 
 
+# Load pre-trained word embeddings
+embeddings_index = {}
+with open('glove.6B.100d.txt', encoding='utf8') as f:
+    for line in f:
+        values = line.split()
+        word = values[0]
+        coefs = np.asarray(values[1:], dtype='float32')
+        embeddings_index[word] = coefs
+
 # Define the focal loss function
 def focal_loss(gamma=2.0, alpha=0.25):
     def focal_loss_fn(y_true, y_pred):
@@ -134,31 +143,54 @@ test_sequences = tokenizer.texts_to_sequences(test_data['Text'].values)
 train_padded = pad_sequences(train_sequences, maxlen=100, padding='post', truncating='post')
 test_padded = pad_sequences(test_sequences, maxlen=100, padding='post', truncating='post')
 
+# Load pre-trained word embeddings
+embeddings_index = {}
+with open('glove.6B.100d.txt', encoding='utf8') as f:
+    for line in f:
+        values = line.split()
+        word = values[0]
+        coefs = np.asarray(values[1:], dtype='float32')
+        embeddings_index[word] = coefs
+
+# Create embedding matrix
+embedding_dim = 100
+word_index = tokenizer.word_index
+num_words = min(10000, len(word_index) + 1)
+embedding_matrix = np.zeros((num_words, embedding_dim))
+for word, i in word_index.items():
+    if i >= num_words:
+        continue
+    embedding_vector = embeddings_index.get(word)
+    if embedding_vector is not None:
+        embedding_matrix[i] = embedding_vector
+
 # Define the model architecture
 model = tf.keras.Sequential([
-    tf.keras.layers.Embedding(input_dim=10000, output_dim=64, input_length=100),
-    tf.keras.layers.Dropout(0.5),
-    tf.keras.layers.Conv1D(64, 5, activation='relu'),
-    tf.keras.layers.GlobalMaxPooling1D(),
+    tf.keras.layers.Embedding(input_dim=num_words, output_dim=100, weights=[embedding_matrix], input_length=100, trainable=False),
+    tf.keras.layers.Conv1D(128, 5, activation='relu'),
+    tf.keras.layers.MaxPooling1D(pool_size=4),
+    tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
     tf.keras.layers.Dense(64, activation='relu'),
     tf.keras.layers.Dropout(0.5),
     tf.keras.layers.Dense(1, activation='sigmoid')
 ])
 
 # Compile the model with the focal loss function
-model.compile(optimizer='adam', loss=focal_loss(), metrics=['accuracy'])
+model.compile(optimizer=tf.keras.optimizers.Adam(lr=0.001), loss=focal_loss(), metrics=['accuracy'])
 
-# Train the model and measure the time taken
+# Train the model
 start_time = time.time()
 history = model.fit(train_padded, train_data['oh_label'].values, epochs=20, batch_size=32, validation_split=0.2)
-end_time = time.time()
+elapsed_time_train = time.time() - start_time
+print('Time taken for training:', elapsed_time_train, 'seconds')
 
-# Evaluate the model on the testing set and measure the time taken
-start_test_time = time.time()
+# Evaluate the model on the testing set
+start_time = time.time()
 y_pred = model.predict(test_padded)
-end_test_time = time.time()
+elapsed_time_test = time.time() - start_time
+print('Time taken for testing:', elapsed_time_test, 'seconds')
 
-# Round the predictions and calculate metrics
+# Round the predictions to the nearest integer
 y_pred = np.round(y_pred).flatten()
 y_true = test_data['oh_label'].values
 
@@ -170,22 +202,20 @@ print(classification_report(y_true, y_pred))
 print('\nAccuracy:', accuracy_score(y_true, y_pred))
 print('Precision:', precision_score(y_true, y_pred))
 print('Recall:', recall_score(y_true, y_pred))
-print('F1 score:', f1_score(y_true, y_pred))
+print('F1 score:',f1_score(y_true, y_pred))
 
-# Calculate and plot the ROC Curve
+# Calculate and plot ROC curve
 fpr, tpr, thresholds = roc_curve(y_true, y_pred)
 roc_auc = auc(fpr, tpr)
-plt.figure(figsize=(8, 6))
-plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = {:.2f})'.format(roc_auc))
+print('Area under ROC curve:', roc_auc)
+
+import matplotlib.pyplot as plt
+plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
 plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
 plt.xlim([0.0, 1.0])
 plt.ylim([0.0, 1.05])
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
-plt.title('Receiver Operating Characteristic (ROC) Curve')
-plt.legend(loc='lower right')
+plt.title('Receiver operating characteristic')
+plt.legend(loc="lower right")
 plt.show()
-
-# Print time taken for training and testing
-print('Time taken for training: {:.2f} seconds'.format(end_time - start_time))
-print('Time taken for testing: {:.2f} seconds'.format(end_test_time - start_test_time))
